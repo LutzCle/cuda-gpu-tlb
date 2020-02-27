@@ -1,5 +1,7 @@
 /*-
  * Copyright (c) 2017 Tomas Karnagel and Matthias Werner
+ * Copyright (c) 2020 Clemens Lutz, German Research Center for Artificial
+ * Intelligence
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -35,6 +37,9 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <sys/mman.h>
+#include <numaif.h>
+#include <sched.h>
 
 using namespace std;
 
@@ -110,11 +115,12 @@ int main(int argc, char **argv)
 {
     unsigned int iterations = 5;
     unsigned int devNo = 0;
+    int numa_node = -1;
 
     // ------------- handle inputs ------------
 
     if (argc < 5) {
-        cerr << "usage: " << argv[0] << " data_from_MB data_to_MB stride_from_KB stride_to_KB Device_No=0 min_instead_avg=0" << endl;
+        cerr << "usage: " << argv[0] << " data_from_MB data_to_MB stride_from_KB stride_to_KB Device_No=0 min_instead_avg=0 NUMA_node=-1" << endl;
         return 0;
     }
 
@@ -129,6 +135,9 @@ int main(int argc, char **argv)
         devNo =atoi(argv[5]);
     if (argc > 6 && strcmp(argv[6],"1")==0)
         metric = METRIC_MIN;
+    if (argc > 7) {
+        numa_node = atoi(argv[7]);
+    }
 
     // ------------- round inputs to power of twos ------------
 
@@ -207,11 +216,32 @@ int main(int argc, char **argv)
     output << ", reduction mode: " << (metric == METRIC_MIN ? "min" : "avg") << endl;
     CHECK_CUDA(cudaSetDevice(devNo));
 
-    unsigned int * hostData = new unsigned int[sizeInts];
-
     unsigned int * data;
-    CHECK_CUDA(cudaMalloc(&data, sizeBytes));
-    CHECK_CUDA(cudaMemset(data, 0, sizeBytes));
+    unsigned int * hostData;
+    if (numa_node == -1) {
+        hostData = new unsigned int[sizeInts];
+        CHECK_CUDA(cudaMalloc(&data, sizeBytes));
+        CHECK_CUDA(cudaMemset(data, 0, sizeBytes));
+    } else {
+        data = reinterpret_cast<unsigned int *>(mmap(nullptr, sizeBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        if (data == MAP_FAILED) {
+            perror("mmap failed with");
+            exit(1);
+        }
+        cpu_set_t numa_node_set;
+        CPU_ZERO(&numa_node_set);
+        CPU_SET(numa_node, &numa_node_set);
+        if (mbind(data, sizeBytes, MPOL_BIND, reinterpret_cast<unsigned long *>(&numa_node_set), CPU_SETSIZE, MPOL_MF_STRICT) == -1) {
+            perror("mbind failed with");
+            exit(1);
+        }
+        if (mlock(data, sizeBytes) == -1) {
+            perror("mlock failed with");
+            exit(1);
+        }
+        CHECK_CUDA(cudaHostRegister(data, sizeBytes, cudaHostRegisterDefault));
+        hostData = data;
+    }
 
     // alloc space for results.
     const unsigned int init = metric == METRIC_AVG ? 0 : std::numeric_limits<unsigned int>::max();
@@ -235,7 +265,9 @@ int main(int argc, char **argv)
             initSteps(hostData, sizeInts, steps);
 
             // copy data
-            CHECK_CUDA(cudaMemcpy(data, hostData, sizeBytes, cudaMemcpyHostToDevice));
+            if (numa_node == -1) {
+                CHECK_CUDA(cudaMemcpy(data, hostData, sizeBytes, cudaMemcpyHostToDevice));
+            }
             CHECK_CUDA(cudaDeviceSynchronize());
 
             // run it once to initialize all pages (over full data size)
@@ -257,7 +289,13 @@ int main(int argc, char **argv)
 
                 // find our result position:
                 unsigned int pos =  (steps/sizeof(int) * 1024 * (i-1)) + 1;
-                CHECK_CUDA(cudaMemcpy(&myResult, data+pos, sizeof(unsigned int), cudaMemcpyDeviceToHost));
+                if (numa_node == -1) {
+                    CHECK_CUDA(cudaMemcpy(&myResult, data+pos, sizeof(unsigned int), cudaMemcpyDeviceToHost));
+                }
+                else {
+                    myResult = data[pos];
+                }
+
                 // write result at the right csv position
                 if(metric == METRIC_AVG)
                     results[ indexY ][ indexX ] += myResult;
@@ -271,8 +309,14 @@ int main(int argc, char **argv)
     }
 
     // cleanup
-    CHECK_CUDA(cudaFree(data));
-    delete hostData;
+    if (numa_node == -1) {
+        CHECK_CUDA(cudaFree(data));
+        delete hostData;
+    }
+    else {
+        CHECK_CUDA(cudaHostUnregister(data));
+        munmap(data, sizeBytes);
+    }
 
     // ------------------------------------ CSV output --------------------------
 
