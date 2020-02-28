@@ -90,7 +90,7 @@ static __global__ void TLBtester(unsigned int * data, unsigned int iterations)
 
 // initialize data with the positions of the next entries - stride walks
 void initSteps(unsigned int * data, unsigned long entries, unsigned int stepsKB){
-    unsigned int pos = 0;
+    unsigned long long pos = 0;
     while(pos < entries){
         data[pos] = pos + stepsKB / sizeof(int) * 1024;
         pos += stepsKB / sizeof(int) * 1024;
