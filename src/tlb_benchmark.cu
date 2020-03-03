@@ -320,12 +320,13 @@ int main(int argc, char **argv)
 
     // ------------------------------------ CSV output --------------------------
 
-    output << "#,";
+    output << "#numa_node,stride_KiB,";
     for (unsigned int steps = strideFromKB; steps <= strideToKB; steps*=2)
         output << steps << ",";
     output << endl;
 
     for(unsigned int y = 0; y < stepsNo; y++){
+        output << numa_node << ",";
         output << dataFromMB + (float)(y * strideFromKB)/1024 << ",";
         for(unsigned int x = 0; x < stridesNo; x++) {
             if ( results[y][x] != 0 && results[y][x] != init) {
