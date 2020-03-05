@@ -48,14 +48,14 @@ enum Metric { METRIC_AVG, METRIC_MIN };
 // --------------------------------- GPU Kernel ------------------------------
 
 
-static __global__ void TLBtester(unsigned int * data, unsigned int iterations)
+static __global__ void TLBtester(uint64_t * data, unsigned int iterations)
 {
 
     unsigned long start = clock64();
     unsigned long stop = clock64();
 
     unsigned long sum = 0;
-    unsigned int pos = 0;
+    uint64_t pos = 0;
     unsigned int posSum = 0;
 
     // warmup
@@ -80,7 +80,7 @@ static __global__ void TLBtester(unsigned int * data, unsigned int iterations)
         pos = data[pos];
 
     // write output here, that we do not access another page
-    data[(pos+1)] = (unsigned int)((unsigned int)sum / (iterations));
+    data[(pos+1)] = (uint64_t)((unsigned int)sum / (iterations));
 
     // if I don't write that, the compiler will optimize all computation away
     if (pos == 0) data[(pos+2)] = posSum;
@@ -89,11 +89,11 @@ static __global__ void TLBtester(unsigned int * data, unsigned int iterations)
 // --------------------------------- support functions ------------------------------
 
 // initialize data with the positions of the next entries - stride walks
-void initSteps(unsigned int * data, unsigned long entries, unsigned int stepsKB){
-    unsigned long long pos = 0;
+void initSteps(uint64_t * data, uint64_t entries, unsigned int stepsKB){
+    uint64_t pos = 0;
     while(pos < entries){
-        data[pos] = pos + stepsKB / sizeof(int) * 1024;
-        pos += stepsKB / sizeof(int) * 1024;
+        data[pos] = pos + stepsKB / sizeof(uint64_t) * 1024;
+        pos += stepsKB / sizeof(uint64_t) * 1024;
     }
 }
 
@@ -197,7 +197,7 @@ int main(int argc, char **argv)
 
     size_t sizeMB = dataToMB+1;
     size_t sizeBytes = sizeMB*1024*1024;
-    size_t sizeInts = sizeBytes / sizeof(int);
+    size_t sizeInts = sizeBytes / sizeof(uint64_t);
 
     int devCount;
     CHECK_CUDA(cudaGetDeviceCount(&devCount));
@@ -216,14 +216,14 @@ int main(int argc, char **argv)
     output << ", reduction mode: " << (metric == METRIC_MIN ? "min" : "avg") << endl;
     CHECK_CUDA(cudaSetDevice(devNo));
 
-    unsigned int * data;
-    unsigned int * hostData;
+    uint64_t * data;
+    uint64_t * hostData;
     if (numa_node == -1) {
-        hostData = new unsigned int[sizeInts];
+        hostData = new uint64_t[sizeInts];
         CHECK_CUDA(cudaMalloc(&data, sizeBytes));
         CHECK_CUDA(cudaMemset(data, 0, sizeBytes));
     } else {
-        data = reinterpret_cast<unsigned int *>(mmap(nullptr, sizeBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        data = reinterpret_cast<uint64_t *>(mmap(nullptr, sizeBytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
         if (data == MAP_FAILED) {
             perror("mmap failed with");
             exit(1);
@@ -288,9 +288,9 @@ int main(int argc, char **argv)
                 unsigned int myResult = 0;
 
                 // find our result position:
-                unsigned int pos =  (steps/sizeof(int) * 1024 * (i-1)) + 1;
+                uint64_t pos =  (((uint64_t)steps)/sizeof(uint64_t) * 1024 * (i-1)) + 1;
                 if (numa_node == -1) {
-                    CHECK_CUDA(cudaMemcpy(&myResult, data+pos, sizeof(unsigned int), cudaMemcpyDeviceToHost));
+                    CHECK_CUDA(cudaMemcpy(&myResult, data+pos, sizeof(uint64_t), cudaMemcpyDeviceToHost));
                 }
                 else {
                     myResult = data[pos];
@@ -320,7 +320,7 @@ int main(int argc, char **argv)
 
     // ------------------------------------ CSV output --------------------------
 
-    output << "#numa_node,stride_KiB,";
+    output << "#numa_node,range_MiB,";
     for (unsigned int steps = strideFromKB; steps <= strideToKB; steps*=2)
         output << steps << ",";
     output << endl;
