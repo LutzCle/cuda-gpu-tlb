@@ -59,15 +59,20 @@ static __global__ void TLBtester(uint64_t * data, unsigned int iterations)
     unsigned int posSum = 0;
 
     // warmup
-    for (unsigned int i = 0; i < iterations; i++)
-        pos = data[pos];
+    for (unsigned int i = 0; i < iterations; i++) {
+        // Bypass the GPU L1 cache, because it's virtually addressed and
+        // doesn't require address translation.
+        // Effectively: pos = data[pos];
+        asm volatile("ld.global.cg.u64 %0, [%1];" : "=l"(pos) : "l"(&data[pos]));
+        posSum += pos;
+    }
     if (pos != 0) pos = 0;
 
 
 
     for (unsigned int i = 0; i < iterations; i++){
         start = clock64();
-        pos = data[pos];
+        asm volatile("ld.global.cg.u64 %0, [%1];" : "=l"(pos) : "l"(&data[pos]));
         // this is done to add a data dependency, for better clock measurments
         posSum += pos;
         stop = clock64();
