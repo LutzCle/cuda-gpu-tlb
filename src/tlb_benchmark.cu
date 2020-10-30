@@ -275,19 +275,11 @@ int main(int argc, char **argv)
             }
             CHECK_CUDA(cudaDeviceSynchronize());
 
-            // run it once to initialize all pages (over full data size)
-            TLBtester<<<1, 1>>>(data,  (unsigned int) ((sizeMB*1024 / steps)) );
-            CHECK_CUDA(cudaDeviceSynchronize());
-
             unsigned int indexY = 0;
             // run test for all steps of this stride
             for (unsigned int i = dataFromKB/steps; i <= dataToKB/steps; i++){
                 if (i == 0) continue;
-                // warmup and initialize TLB
-                TLBtester<<<1, 1>>>(data, i);
-                CHECK_CUDA(cudaDeviceSynchronize());
 
-                // real test
                 TLBtester<<<1, 1>>>(data, i);
                 CHECK_CUDA(cudaDeviceSynchronize());
                 unsigned int myResult = 0;
